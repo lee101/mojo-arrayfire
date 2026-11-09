@@ -60,9 +60,9 @@ def _i64(values) -> np.ndarray:
     return np.ascontiguousarray(values, dtype=np.int64)
 
 
-def _triples(slices):
+def _triples(slices, *, for_seq: bool = False):
     """(starts, stops, steps) as three contiguous arrays for the kernel."""
-    enc = [_encode_slice(s) for s in slices]
+    enc = [_encode_slice(s, for_seq=for_seq) for s in slices]
     return (
         _i64([e[0] for e in enc]),
         _i64([e[1] for e in enc]),
@@ -70,9 +70,16 @@ def _triples(slices):
     )
 
 
-def _encode_slice(s: slice):
+def _encode_slice(s: slice, *, for_seq: bool = False):
     if not isinstance(s, slice):
         raise TypeError(f"expected a slice, got {type(s).__name__}")
+    # A zero step is a ZeroDivisionError in upstream's _slice_to_length (it
+    # divides by the step) and a zero step in upstream's Seq (it stores the
+    # step verbatim). The two paths are not the same error, so they encode
+    # differently: the Seq path permits the zero through as upstream Seq does,
+    # and the length path raises as upstream _slice_to_length does.
+    if not for_seq and s.step is not None and int(s.step) == 0:
+        raise ZeroDivisionError("division by zero")
     return (
         NONE if s.start is None else int(s.start),
         NONE if s.stop is None else int(s.stop),
@@ -91,7 +98,7 @@ def seq_batch(slices) -> np.ndarray:
     n = len(slices)
     if n == 0:
         return np.empty((0, 3), dtype=np.int64)
-    starts, stops, steps = _triples(slices)
+    starts, stops, steps = _triples(slices, for_seq=True)
     out = np.empty(3 * n, dtype=np.int64)
     lib.af_seq_batch(
         n, _addr(starts), _addr(stops), _addr(steps), _addr(out)
@@ -101,6 +108,8 @@ def seq_batch(slices) -> np.ndarray:
 
 def seq_from_int(index: int) -> np.ndarray:
     """The `Seq` upstream builds for an integer index: `(index, index, 1)`."""
+    # Upstream's Seq takes c_double(index); the C call truncates to dim_t, so
+    # what reaches af is the int64 conversion of the float index.
     return np.array([[int(index), int(index), 1]], dtype=np.int64)
 
 
@@ -127,7 +136,13 @@ def assign_dims(keys, idims) -> np.ndarray:
     and the result is the 4-dimensional shape of the assignment target. Missing
     trailing axes default to a full slice, as upstream does.
     """
-    key = list(keys)
+    # A bare (non-tuple) key addresses only axis 0 upstream: a single number
+    # pins dims[0] to 1 and a single slice takes its length. The port pads
+    # missing axes with full slices, which matches those two cases exactly.
+    if isinstance(keys, (int, np.integer)) or isinstance(keys, slice):
+        key = [keys]
+    else:
+        key = list(keys)
     if len(key) > 4:
         raise ValueError("af arrays have at most four dimensions")
     n = 4

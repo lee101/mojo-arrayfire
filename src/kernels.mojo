@@ -53,7 +53,8 @@ def af_seq_batch(
     Faithful to `arrayfire.index.Seq.__init__`, including the two empty-selection
     special cases and the trailing `end - copysign(1, step)` adjustment. The
     `isinstance(S, numbers.Number)` branch of upstream has no slice to encode
-    and is handled by the shim.
+    and is handled by the shim. A zero step cannot be distinguished from a
+    missing one by the sentinel, so it reads as the default step of 1.
     """
     var start = _i64p(start_addr)
     var stop = _i64p(stop_addr)

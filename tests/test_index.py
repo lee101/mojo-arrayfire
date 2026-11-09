@@ -6,6 +6,8 @@ because it loads the ArrayFire C library at import time and no backend is
 installed; the harness sidesteps only that, not the code under test.
 """
 
+import math
+
 import numpy as np
 import pytest
 
@@ -188,3 +190,134 @@ def test_number_dtype_table_matches_upstream():
             {bool: "bool", int: "int", float: "float",
              complex: "complex"}[type(value)]
         ] == name
+
+
+def test_seq_batch_tolerance_float_triples():
+    """Seq fields are c_double upstream; compare with an explicit tolerance."""
+    for s in SLICES:
+        got = maf.seq_batch([s])[0].astype(np.float64)
+        expect = np.array(seq_triple(s), dtype=np.float64)
+        np.testing.assert_allclose(got, expect, rtol=1e-9, atol=1e-9)
+
+
+def test_seq_batch_one_element():
+    assert tuple(maf.seq_batch([slice(3, 4)])[0]) == (3, 3, 1)
+    assert seq_triple(slice(3, 4)) == (3.0, 3.0, 1.0)
+    assert maf.seq_from_int(0)[0].tolist() == [0, 0, 1]
+    assert maf.seq_from_int(-7)[0].tolist() == [-7, -7, 1]
+
+
+def test_seq_batch_duplicates():
+    got = maf.seq_batch([slice(2, 5)] * 3)
+    for row in got:
+        assert tuple(row) == (2, 4, 1)
+        assert tuple(row) == tuple(np.array(seq_triple(slice(2, 5))))
+
+
+def test_seq_from_int_matches_upstream_seq():
+    for v in (0, 1, 7, -7, True):
+        got = maf.seq_from_int(v)[0].astype(np.float64)
+        expect = np.array(seq_triple(v), dtype=np.float64)
+        np.testing.assert_allclose(got, expect, rtol=1e-9, atol=1e-9)
+
+
+def test_seq_from_int_matches_upstream_numeric_index():
+    for v in (np.int64(5),):
+        got = maf.seq_from_int(v)[0].astype(np.float64)
+        expect = np.array(seq_triple(v), dtype=np.float64)
+        np.testing.assert_allclose(got, expect, rtol=1e-9, atol=1e-9)
+    # A fractional index is stored verbatim as c_double by upstream's Seq,
+    # but the C dim_t index is the truncation; the port returns that C value.
+    assert seq_triple(2.5) == (2.5, 2.5, 1.0)
+    assert maf.seq_from_int(2.5)[0].tolist() == [2, 2, 1]
+    assert math.isclose(seq_triple(2.5)[0], 2.5, rel_tol=1e-9, abs_tol=1e-9)
+
+
+def test_seq_from_int_complex_and_nonfinite():
+    with pytest.raises(TypeError):
+        maf.seq_from_int(1 + 2j)
+    with pytest.raises(TypeError):
+        seq_triple(1 + 2j)
+    with pytest.raises(ValueError):
+        maf.seq_from_int(float("nan"))
+    with pytest.raises(OverflowError):
+        maf.seq_from_int(float("inf"))
+
+
+def test_slice_lengths_duplicates_and_empty():
+    got = maf.slice_lengths([slice(2, 5)] * 3, [10, 10, 10])
+    for v in got:
+        assert int(v) == _slice_to_length(slice(2, 5), 10) == 3
+    assert maf.slice_lengths([], []).shape == (0,)
+    assert maf.seq_batch([]).shape == (0, 3)
+
+
+def test_slice_length_degenerate_dims():
+    assert maf.slice_length(slice(None), 0) == _slice_to_length(slice(None), 0) == 0
+    assert maf.slice_length(slice(None), -3) == _slice_to_length(slice(None), -3) == -3
+    assert maf.slice_length(slice(0, 100), 10) == _slice_to_length(slice(0, 100), 10) == 100
+    assert maf.slice_length(slice(-100, -90), 10) == _slice_to_length(slice(-100, -90), 10) == -10
+    assert maf.slice_length(slice(-100, -90), 10) == -10
+
+
+def test_slice_length_zero_step_raises():
+    with pytest.raises(ZeroDivisionError):
+        _slice_to_length(slice(0, 5, 0), 10)
+    with pytest.raises(ZeroDivisionError):
+        maf.slice_length(slice(0, 5, 0), 10)
+    with pytest.raises(ZeroDivisionError):
+        maf.slice_lengths([slice(0, 5, 0)], [10])
+    with pytest.raises(ZeroDivisionError):
+        maf.assign_shape((slice(0, 5, 0),), (10, 20, 30, 40))
+    with pytest.raises(ZeroDivisionError):
+        _get_assign_dims((slice(0, 5, 0),), [10, 20, 30, 40])
+
+
+def test_assign_dims_single_non_tuple_keys():
+    assert list(maf.assign_shape(3, (10, 20, 30, 40))) == _get_assign_dims(3, [10, 20, 30, 40]) == [1, 20, 30, 40]
+    assert list(maf.assign_shape(slice(2, 5), (10, 20, 30, 40))) == _get_assign_dims(slice(2, 5), [10, 20, 30, 40]) == [3, 20, 30, 40]
+    assert list(maf.assign_dims(3, (10, 20, 30, 40))) == list(maf.assign_shape(3, (10, 20, 30, 40)))
+    assert list(maf.assign_dims(slice(2, 5), (10, 20, 30, 40))) == list(maf.assign_shape(slice(2, 5), (10, 20, 30, 40)))
+    assert list(maf.assign_shape(True, (10, 20, 30, 40))) == _get_assign_dims(True, [10, 20, 30, 40]) == [1, 20, 30, 40]
+
+
+def test_assign_dims_degenerate_shapes():
+    assert list(maf.assign_shape((), ())) == [1, 1, 1, 1]
+    assert _get_assign_dims((), []) == [1, 1, 1, 1]
+    assert list(maf.assign_shape((slice(3, 4),), (10, 20, 30, 40))) == _get_assign_dims((slice(3, 4),), [10, 20, 30, 40]) == [1, 20, 30, 40]
+
+
+def test_get_info_degenerate():
+    assert maf.get_info([0, 3], 0) == _get_info([0, 3], 0) == (2, [0, 3, 1, 1])
+    assert maf.get_info(None, -5) == _get_info(None, -5) == (1, [-5, 1, 1, 1])
+    assert maf.get_info([10**18], 0) == _get_info([10**18], 0)
+    assert maf.get_info([2.5], 0)[1][0] == 2
+    assert _get_info([2.5], 0)[1][0] == 2.5
+    with pytest.raises(RuntimeError):
+        _get_info([], 0)
+    with pytest.raises(RuntimeError):
+        maf.get_info([], 0)
+    with pytest.raises(IndexError):
+        _get_info([1, 2, 3, 4, 5], 0)
+    with pytest.raises(IndexError):
+        maf.get_info([1, 2, 3, 4, 5], 0)
+
+
+def test_implicit_dtype_numpy_scalars():
+    number_dtype, implicit_dtype = _dtypes["number_dtype"], _dtypes["implicit_dtype"]
+    # Upstream number_dtype dispatches on a.dtype.char for non-builtin
+    # scalars; the harness to_dtype table maps 'l' to s64 and 'i' to s32.
+    assert int(number_dtype(np.int64(3))) == maf.DTYPE_VALUES["s64"]
+    assert int(number_dtype(np.int32(3))) == maf.DTYPE_VALUES["s32"]
+    assert int(implicit_dtype(np.int64(3), _upstream.Dtype.f32)) == maf.DTYPE_VALUES["s64"]
+    assert int(implicit_dtype(np.int32(3), _upstream.Dtype.f32)) == maf.DTYPE_VALUES["s32"]
+    assert maf.implicit_dtype(np.int64(3), maf.DTYPE_VALUES["f32"]) == maf.DTYPE_VALUES["s64"]
+    assert int(number_dtype(np.float64(1.5))) == maf.DTYPE_VALUES["f64"]
+    assert maf.implicit_dtype(np.float64(1.5), maf.DTYPE_VALUES["f32"]) == int(
+        implicit_dtype(np.float64(1.5), _upstream.Dtype.f32)
+    ) == maf.DTYPE_VALUES["f32"]
+    assert maf.implicit_dtype(float("nan"), maf.DTYPE_VALUES["f32"]) == 0
+    assert int(implicit_dtype(float("nan"), _upstream.Dtype.f32)) == 0
+    assert maf.implicit_dtype(float("inf"), maf.DTYPE_VALUES["f32"]) == 0
+    assert math.isnan(float("nan"))
+    assert math.isinf(float("inf"))

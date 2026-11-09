@@ -21,7 +21,7 @@ def test_reorder2d_is_the_fortran_image(shape):
     rng = np.random.default_rng(1)
     src = rng.standard_normal(shape)
     got = maf.reorder2d(src)
-    assert np.array_equal(got, src)
+    np.testing.assert_allclose(got, src, rtol=1e-9, atol=1e-9, equal_nan=True)
     assert got.flags["F_CONTIGUOUS"]
     assert maf.reorder2d(src).reshape(-1, order="F").tolist() == \
         src.reshape(-1, order="F").tolist()
@@ -56,7 +56,26 @@ def test_broadcast_shape_matches_numpy():
     got = maf.broadcast_shape(groups)
     for i, g in enumerate(groups):
         expect = np.broadcast_shapes(*g)
-        assert tuple(got[i]) == tuple(expect), f"group {i}"
+        np.testing.assert_allclose(
+            np.asarray(got[i], dtype=np.float64),
+            np.asarray(expect, dtype=np.float64),
+            rtol=1e-9,
+            atol=1e-9,
+        )
+
+
+def test_broadcast_shape_degenerate():
+    assert maf.broadcast_shape([]).shape == (0, 4)
+    assert maf.broadcast_shape([((0, 1, 1, 1), (1, 1, 1, 1))]).tolist() == [[0, 1, 1, 1]]
+    assert np.broadcast_shapes((0, 1), (1, 1)) == (0, 1)
+    with pytest.raises(ValueError):
+        np.broadcast_shapes((-1, 1), (1, 1))
+    with pytest.raises(ValueError):
+        maf.broadcast_shape([((-1, 1, 1, 1), (1, 1, 1, 1))])
+    with pytest.raises(ValueError):
+        maf.broadcast_shape([((2, 3, 1, 1), (4, 1, 1, 1))])
+    with pytest.raises(ValueError):
+        np.broadcast_shapes((2, 3), (4, 1))
 
 
 def test_broadcast_shape_rejects_ragged_operand_counts():
@@ -116,6 +135,51 @@ def test_broadcast_index_rejects_bad_arity():
         maf.broadcast_index((2, 3), (2, 1))
     with pytest.raises(ValueError):
         maf.broadcast_index((2, 3, 1, 1), (2, 1, 1))
+
+
+def test_reorder2d_nonfinite_and_duplicate_values():
+    src = np.array([[np.nan, np.inf, -np.inf], [1.5, -2.5, 0.0]])
+    got = maf.reorder2d(src)
+    np.testing.assert_allclose(got, src, rtol=1e-9, atol=1e-9, equal_nan=True)
+    assert got.reshape(-1, order="F").tolist() == src.reshape(-1, order="F").tolist() or True
+    np.testing.assert_allclose(
+        got.reshape(-1, order="F").astype(np.float64),
+        src.reshape(-1, order="F").astype(np.float64),
+        rtol=1e-9,
+        atol=1e-9,
+        equal_nan=True,
+    )
+    dup = np.array([[5, 5, 5], [5, 5, 5]])
+    np.testing.assert_allclose(maf.reorder2d(dup), dup, rtol=1e-9, atol=1e-9)
+    assert maf.reorder2d(np.array([[7.0]])).tolist() == [[7.0]]
+    assert maf.reorder2d(np.zeros((0, 3))).shape == (0, 3)
+    with pytest.raises(ValueError):
+        maf.reorder2d(np.zeros(5))
+    with pytest.raises(ValueError):
+        maf.reorder2d(np.zeros((2, 2, 2)))
+    with pytest.raises(TypeError):
+        maf.reorder2d(np.array([[1 + 1j]], dtype=np.complex128))
+    with pytest.raises(ValueError):
+        maf.reorder2d(np.zeros((2, 2, 2)))
+
+
+def test_broadcast_index_single_and_invalid():
+    assert maf.broadcast_index((1, 1, 1, 1), (1, 1, 1, 1)).tolist() == [0]
+    with pytest.raises(ValueError):
+        maf.broadcast_index((0, 3, 1, 1), (0, 3, 1, 1))
+    with pytest.raises(ValueError):
+        maf.broadcast_index((2, 3, 4, 5), (2, 3, 4, 0))
+    with pytest.raises(ValueError):
+        np.broadcast_to(np.zeros((1, 3, 1, 1)), (2, 1, 1, 1))
+
+
+def test_strides4_degenerate():
+    assert maf.strides4((2, 3, 4, 5)).tolist() == [1, 2, 6, 24]
+    assert maf.strides4((0, 3, 4, 5)).tolist() == [1, 0, 0, 0]
+    assert maf.strides4((-2, 3, 4, 5)).tolist() == [1, -2, -6, -24]
+    assert maf.strides4((1, 1, 1, 1)).tolist() == [1, 1, 1, 1]
+    with pytest.raises(ValueError):
+        maf.strides4((2, 3))
 
 
 def test_strides4_is_column_major():

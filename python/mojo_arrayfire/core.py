@@ -7,6 +7,8 @@ assignment shapes, host buffer marshalling, broadcast shape and index maps) and
 leaves every `af_*` device call to the real package.
 """
 
+import numbers
+
 import numpy as np
 
 from ._lib import (
@@ -71,14 +73,18 @@ def implicit_dtype(number, array_dtype: int) -> int:
     A `float` or `complex` literal keeps `f32`/`c32` rather than widening the
     array, which is the only special case upstream encodes.
     """
+    # Upstream checks numbers.Number (util._is_number), so NumPy scalars take
+    # the same branches as the Python scalars they wrap. Order matters: every
+    # Real is also Complex, so the narrowest type is tested first, and bool
+    # is checked first because it is a subclass of int upstream too.
     if isinstance(number, bool):
         value = DTYPE_VALUES["b8"]
-    elif isinstance(number, int):
+    elif isinstance(number, numbers.Integral):
         value = DTYPE_VALUES["s64"]
-    elif isinstance(number, complex):
-        value = DTYPE_VALUES["c64"]
-    elif isinstance(number, float):
+    elif isinstance(number, numbers.Real):
         value = DTYPE_VALUES["f64"]
+    elif isinstance(number, numbers.Complex):
+        value = DTYPE_VALUES["c64"]
     else:
         raise TypeError(f"not a Python number: {type(number).__name__}")
     narrow = (DTYPE_VALUES["f32"], DTYPE_VALUES["c32"])
@@ -99,7 +105,10 @@ def get_info(dims=None, buf_len: int = 0):
         numdims = len(dims)
         idims = [1] * 4
         for i, dim in enumerate(dims):
-            idims[i] = int(dim)
+            # Upstream assigns dims verbatim into a list; only the C array
+            # truncates to dim_t. Keep ints exact and floats in int64 range
+            # truncating the same way a dim_t store would.
+            idims[i] = dim if isinstance(dim, int) else int(dim)
     elif buf_len != 0:
         idims = [int(buf_len), 1, 1, 1]
         numdims = 1
