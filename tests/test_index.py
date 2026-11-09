@@ -193,11 +193,11 @@ def test_number_dtype_table_matches_upstream():
 
 
 def test_seq_batch_tolerance_float_triples():
-    """Seq fields are c_double upstream; compare with an explicit tolerance."""
+    """Seq fields are c_double upstream; values are small integers, so exact."""
     for s in SLICES:
         got = maf.seq_batch([s])[0].astype(np.float64)
         expect = np.array(seq_triple(s), dtype=np.float64)
-        np.testing.assert_allclose(got, expect, rtol=1e-9, atol=1e-9)
+        assert np.array_equal(got, expect)
 
 
 def test_seq_batch_one_element():
@@ -218,19 +218,19 @@ def test_seq_from_int_matches_upstream_seq():
     for v in (0, 1, 7, -7, True):
         got = maf.seq_from_int(v)[0].astype(np.float64)
         expect = np.array(seq_triple(v), dtype=np.float64)
-        np.testing.assert_allclose(got, expect, rtol=1e-9, atol=1e-9)
+        assert np.array_equal(got, expect)
 
 
 def test_seq_from_int_matches_upstream_numeric_index():
     for v in (np.int64(5),):
         got = maf.seq_from_int(v)[0].astype(np.float64)
         expect = np.array(seq_triple(v), dtype=np.float64)
-        np.testing.assert_allclose(got, expect, rtol=1e-9, atol=1e-9)
+        assert np.array_equal(got, expect)
     # A fractional index is stored verbatim as c_double by upstream's Seq,
     # but the C dim_t index is the truncation; the port returns that C value.
+    # The port therefore intentionally does NOT match seq_triple here.
     assert seq_triple(2.5) == (2.5, 2.5, 1.0)
     assert maf.seq_from_int(2.5)[0].tolist() == [2, 2, 1]
-    assert math.isclose(seq_triple(2.5)[0], 2.5, rel_tol=1e-9, abs_tol=1e-9)
 
 
 def test_seq_from_int_complex_and_nonfinite():

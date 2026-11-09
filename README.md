@@ -110,20 +110,22 @@ PYTHONPATH=python python -m pytest tests -q
 
 ## Performance
 
-Best-of-five wall clock, same process, every case gated on an exact correctness
-check before timing. The reference column is the real upstream code for the
-index cases, executed one call per element, and the fastest reasonable NumPy
-formulation for the rest. The machine is shared and was not idle, so treat
-absolute times as indicative.
+Best-of-three wall clock, same process, every case gated on a correctness
+check before timing (full checks for `reorder2d` and `broadcast_index`,
+spot checks for the batched index cases). The reference column is the real
+upstream code for the index cases, executed one call per element, and the
+fastest reasonable NumPy formulation for the rest. The machine is shared and
+was not idle, so treat absolute times as indicative. Medians of three
+`pixi run bench` runs in VERIFY; see `bench/verify.md`.
 
 | case | reference | mojo-arrayfire | result |
 | --- | ---: | ---: | ---: |
-| `Seq` batch n=100000 | 81.65 ms | 180.17 ms | **0.45x, slower** |
-| slice lengths n=100000 | 329.48 ms | 404.27 ms | **0.81x, slower** |
-| `reorder2d` 2048x2048 float64 | 53.49 ms | 125.71 ms | **0.43x, slower** |
-| `broadcast_index` 1048576 elements | 0.65 ms | 6.01 ms | **0.11x, slower** |
-| `broadcast_shape` n=50000 | 426.80 ms | 1147.23 ms | **0.37x, slower** |
-| `strides4` x200000 | 201.03 ms | 4558.71 ms | **0.04x, slower** |
+| `Seq` batch n=100000 | 22.38 ms | 60.15 ms | **0.37x, slower** |
+| slice lengths n=100000 | 42.20 ms | 66.06 ms | **0.64x, slower** |
+| `reorder2d` 2048x2048 float64 | 27.27 ms | 43.37 ms | **0.63x, slower** |
+| `broadcast_index` 1048576 elements | 0.53 ms | 3.66 ms | **0.14x, slower** |
+| `broadcast_shape` n=50000 | 115.77 ms | 139.49 ms | **0.83x, slower** |
+| `strides4` x200000 | 20.24 ms | 1304.51 ms | **0.02x, slower** |
 
 Every case is slower, and the reasons are structural rather than fixable by
 tuning a kernel:
@@ -138,7 +140,7 @@ tuning a kernel:
   not exist, and the README says so.
 - `broadcast_index` is the one case with real per-element work, and NumPy's
   equivalent is a single vectorised `broadcast_to`. One million elements in
-  6 ms is a compiled index map; the vectorised form does the same job with no
+  ~4 ms is a compiled index map; the vectorised form does the same job with no
   per-element branch at all.
 - `reorder2d` is a byte-granular permutation. NumPy's `asfortranarray` uses a
   blocked, type-aware copy; the byte loop is a straight per-element move. A
@@ -171,7 +173,7 @@ the kernel reads it.
 
 ## Tests
 
-`PYTHONPATH=python python -m pytest tests -q` — 59 tests.
+`PYTHONPATH=python python -m pytest tests -q` — 76 tests.
 
 They are chosen so that a plausible kernel bug fails them: a missing negative
 step swap in the `Seq` mapping (`test_seq_batch_pinned_values`), a truncation

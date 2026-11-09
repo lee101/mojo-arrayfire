@@ -21,7 +21,7 @@ def test_reorder2d_is_the_fortran_image(shape):
     rng = np.random.default_rng(1)
     src = rng.standard_normal(shape)
     got = maf.reorder2d(src)
-    np.testing.assert_allclose(got, src, rtol=1e-9, atol=1e-9, equal_nan=True)
+    assert np.array_equal(got, src)
     assert got.flags["F_CONTIGUOUS"]
     assert maf.reorder2d(src).reshape(-1, order="F").tolist() == \
         src.reshape(-1, order="F").tolist()
@@ -56,12 +56,7 @@ def test_broadcast_shape_matches_numpy():
     got = maf.broadcast_shape(groups)
     for i, g in enumerate(groups):
         expect = np.broadcast_shapes(*g)
-        np.testing.assert_allclose(
-            np.asarray(got[i], dtype=np.float64),
-            np.asarray(expect, dtype=np.float64),
-            rtol=1e-9,
-            atol=1e-9,
-        )
+        assert tuple(got[i]) == tuple(expect), f"group {i}"
 
 
 def test_broadcast_shape_degenerate():
@@ -140,17 +135,10 @@ def test_broadcast_index_rejects_bad_arity():
 def test_reorder2d_nonfinite_and_duplicate_values():
     src = np.array([[np.nan, np.inf, -np.inf], [1.5, -2.5, 0.0]])
     got = maf.reorder2d(src)
-    np.testing.assert_allclose(got, src, rtol=1e-9, atol=1e-9, equal_nan=True)
-    assert got.reshape(-1, order="F").tolist() == src.reshape(-1, order="F").tolist() or True
-    np.testing.assert_allclose(
-        got.reshape(-1, order="F").astype(np.float64),
-        src.reshape(-1, order="F").astype(np.float64),
-        rtol=1e-9,
-        atol=1e-9,
-        equal_nan=True,
-    )
+    assert np.array_equal(got.view(np.int64), src.view(np.int64))
+    assert np.array_equal(got.view(np.int64).reshape(-1, order="F"), src.view(np.int64).reshape(-1, order="F"))
     dup = np.array([[5, 5, 5], [5, 5, 5]])
-    np.testing.assert_allclose(maf.reorder2d(dup), dup, rtol=1e-9, atol=1e-9)
+    assert np.array_equal(maf.reorder2d(dup), dup)
     assert maf.reorder2d(np.array([[7.0]])).tolist() == [[7.0]]
     assert maf.reorder2d(np.zeros((0, 3))).shape == (0, 3)
     with pytest.raises(ValueError):
